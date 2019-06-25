@@ -1,3 +1,5 @@
+#!/bin/python3
+
 """
 Usage:
     init.py [<file>]
@@ -10,7 +12,7 @@ import pathlib
 import datetime
 
 
-SAVES_DIR = pathlib.Path(__file__).parent / "Saves"
+SAVES_DIR = (pathlib.Path(__file__).parent / "Saves").resolve()
 CONDITIONS = [
     "blinded",
     "charmed",
@@ -449,7 +451,7 @@ class InitApp(flyingcarpet.App):
         self.toolBar.addAction(self.clone_creature_action)
 
         self.remove_creatures_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("list-remove"), "Remove Creatures")
-        self.remove_creatures_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.Key_R)
+        self.remove_creatures_action.setShortcut(QtCore.Qt.Key_Delete)
         self.remove_creatures_action.triggered.connect(self.remove_selected_creatures)
         self.toolBar.addAction(self.remove_creatures_action)
 
@@ -469,7 +471,7 @@ class InitApp(flyingcarpet.App):
         self.toolBar.addAction(self.add_tag_action)
 
         self.remove_tags_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("tag-delete"), "Remove Tags")
-        self.remove_tags_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.SHIFT | QtCore.Qt.Key_T)
+        self.remove_tags_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.Key_R)
         self.remove_tags_action.triggered.connect(self.remove_tags_from_selected_creatures)
         self.toolBar.addAction(self.remove_tags_action)
 
@@ -522,9 +524,6 @@ class InitApp(flyingcarpet.App):
         self.clear_death_saves_action.triggered.connect(self.clear_death_saves_from_selected_creatures)
         self.death_saves_menu.addAction(self.clear_death_saves_action)
 
-        self.del_shortcut = QtWidgets.QShortcut(QtCore.Qt.Key_Delete, self)
-        self.del_shortcut.activated.connect(self.remove_selected_creatures)
-
         self.ret_shortcut = QtWidgets.QShortcut(QtCore.Qt.Key_Return, self)
         self.ret_shortcut.activated.connect(self.edit_selected_creature)
 
@@ -575,7 +574,10 @@ class InitApp(flyingcarpet.App):
         return {idx.data(QtCore.Qt.UserRole): idx for idx in self.creature_list.selectedIndexes()}
 
     def update_info_label(self):
-        self.info_label.setText(f"Round: {self.current_round}")
+        if self.current_round > 0:
+            self.info_label.setText(f"Round: {self.current_round}")
+        else:
+            self.info_label.setText(f"Round: Not yet started")
 
     def to_json(self):
         return {
@@ -602,18 +604,26 @@ class InitApp(flyingcarpet.App):
             self.creature_model.removeRow(self.creature_sort_model.mapToSource(idx).row())
 
     def damage_selected_creatures(self):
+        scti = self.selected_creatures_to_index
+        if not scti:
+            return
+
         dia = DamageDialog(self)
         if dia.exec_():
             print("Damage =>", dia.damage)
-            for creature, idx in self.selected_creatures_to_index.items():
+            for creature, idx in scti.items():
                 creature.apply_damage(dia.damage)
                 self.creature_model.itemFromIndex(self.creature_sort_model.mapToSource(idx)).emitDataChanged()
 
     def set_initiative_for_selected_creatures(self):
+        scti = self.selected_creatures_to_index
+        if not scti:
+            return
+
         dia = InitiativeDialog(self)
         if dia.exec_():
             print("Initiative =>", dia.initiative)
-            for creature, idx in self.selected_creatures_to_index.items():
+            for creature, idx in scti.items():
                 creature.initiative = dia.initiative
                 self.creature_model.itemFromIndex(self.creature_sort_model.mapToSource(idx)).emitDataChanged()
 
@@ -629,7 +639,7 @@ class InitApp(flyingcarpet.App):
 
     def current_creature(self, creatures=None):
         if self.current_round < 1:
-            return Nine
+            return None
         creatures = self.creatures if creatures is None else creatures
         creatures_in_initiative = [c for c in creatures if c.initiative is not None]
         if not creatures_in_initiative:
@@ -647,6 +657,8 @@ class InitApp(flyingcarpet.App):
             current.completed_round = self.current_round
             self.creature_model.itemFromIndex(creatures[current]).emitDataChanged()
         else:
+            if not any(c.initiative is not None for c in creatures):
+                return
             self.current_round = 1
 
         current = self.current_creature(creatures.keys())
@@ -672,7 +684,7 @@ class InitApp(flyingcarpet.App):
         if not dia.exec_():
             return
 
-        for creature, idx in self.selected_creatures_to_index.items():
+        for creature, idx in scti.items():
             if dia.tag not in creature.tags:
                 creature.tags.append(dia.tag)
             self.creature_model.itemFromIndex(self.creature_sort_model.mapToSource(idx)).emitDataChanged()
@@ -690,7 +702,7 @@ class InitApp(flyingcarpet.App):
         if not dia.exec_():
             return
 
-        for creature, idx in self.selected_creatures_to_index.items():
+        for creature, idx in scti.items():
             for tag in dia.tags:
                 creature.tags.remove(tag)
             self.creature_model.itemFromIndex(self.creature_sort_model.mapToSource(idx)).emitDataChanged()
