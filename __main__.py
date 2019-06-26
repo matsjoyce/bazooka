@@ -10,6 +10,8 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 import dataclasses
 import pathlib
 import datetime
+import sly
+import random
 
 
 SAVES_DIR = (pathlib.Path(__file__).parent / "Saves").resolve()
@@ -49,20 +51,98 @@ COLOR_FOR_TAG.update({o: QtCore.Qt.darkYellow for o in OTHERS})
 
 TAG_COMPLETIONS = sorted(CONDITIONS + OTHERS)
 
+
+class DLexer(sly.Lexer):
+    tokens = {NUMBER, D, PLUS, MINUS, LPAREN, RPAREN}
+
+    NUMBER = r"\d+"
+    D = "d"
+    PLUS = r"\+"
+    MINUS = "-"
+    LPAREN = r"\("
+    RPAREN = r"\)"
+
+    ignore = r" \t"
+
+    class LexerError(RuntimeError):
+        pass
+
+    def error(self, t):
+        raise self.LexerError()
+
+
+class DParser(sly.Parser):
+    tokens = DLexer.tokens
+
+    @_("factor")
+    def expr(self, p):
+        return p.factor
+
+    @_("expr PLUS factor")
+    def expr(self, p):
+        return p.expr + p.factor
+
+    @_("expr MINUS factor")
+    def expr(self, p):
+        return p.expr - p.factor
+
+    @_("atom")
+    def factor(self, p):
+        return p.atom
+
+    @_("MINUS atom")
+    def factor(self, p):
+        return -p.atom
+
+    @_("atom D atom")
+    def factor(self, p):
+        return sum(random.randrange(1, p.atom1 + 1) for i in range(p.atom0))
+
+    @_("NUMBER")
+    def atom(self, p):
+        return int(p.NUMBER)
+
+    @_("LPAREN expr RPAREN")
+    def atom(self, p):
+        return p.expr
+
+    class ParserError(RuntimeError):
+        pass
+
+    class EOFError(ParserError):
+        pass
+
+    def error(self, p):
+        if not p:
+            raise self.EOFError()
+        raise self.ParserError()
+
+
+def d_eval(str, lexer=DLexer(), parser=DParser()):
+    return DParser().parse(DLexer().tokenize(str))
+
+
 @dataclasses.dataclass
 class Creature:
     name: str = ""
     initiative: int = None
-    max_hp: int = None
-    hp: int = None
+    evaluated_max_hp: int = None
+    max_hp_generator: str = ""
+    damage_taken: int = 0
     death_saves_success: int = 0
     death_saves_failure: int = 0
     tags: list = dataclasses.field(default_factory=list)
     completed_round: int = -1
 
+    @property
+    def max_hp(self):
+        if self.evaluated_max_hp is None:
+            self.evaluated_max_hp = d_eval(self.max_hp_generator)
+            self.damage_taken = min(self.evaluated_max_hp, self.damage_taken)
+        return self.evaluated_max_hp
+
     def apply_damage(self, damage):
-        hp = self.max_hp if self.hp is None else self.hp
-        self.hp = min(self.max_hp, max(0, hp - damage))
+        self.damage_taken = min(self.max_hp, max(0, self.damage_taken + damage))
 
     def start_turn(self):
         self.tags = [(n, None if t is None else (t - 1)) for n, t in self.tags if t is None or t > 1]
@@ -81,6 +161,25 @@ class Creature:
 
     def __hash__(self):
         return id(self)
+
+
+class DValidator(QtGui.QValidator):
+    def __init__(self, *args, allow_empty=False):
+        super().__init__(*args)
+        self.allow_empty = allow_empty
+
+    def validate(self, input, pos):
+        if not input and self.allow_empty:
+            return (QtGui.QValidator.Acceptable, input, pos)
+        try:
+            d_eval(input)
+        except DLexer.LexerError:
+            return (QtGui.QValidator.Invalid, input, pos)
+        except DParser.EOFError:
+            return (QtGui.QValidator.Intermediate, input, pos)
+        except DParser.ParserError:
+            return (QtGui.QValidator.Intermediate, input, pos)
+        return (QtGui.QValidator.Acceptable, input, pos)
 
 
 class CreatureDialog(QtWidgets.QDialog):
@@ -102,8 +201,8 @@ class CreatureDialog(QtWidgets.QDialog):
         self.max_hp_label = QtWidgets.QLabel("Max HP:", self)
         self.layout().addWidget(self.max_hp_label, 1, 0)
 
-        self.max_hp_edit = QtWidgets.QLineEdit("" if self.creature.max_hp is None else str(self.creature.max_hp), self)
-        self.max_hp_edit.setValidator(QtGui.QIntValidator(0, 1000000, self))
+        self.max_hp_edit = QtWidgets.QLineEdit(self.creature.max_hp_generator, self)
+        self.max_hp_edit.setValidator(DValidator(self))
         self.layout().addWidget(self.max_hp_edit, 1, 1)
         self.max_hp_edit.textChanged.connect(self.set_ok_enabled)
 
@@ -115,14 +214,16 @@ class CreatureDialog(QtWidgets.QDialog):
         self.set_ok_enabled()
 
     def set_ok_enabled(self):
-        if not self.name_edit.text() or not self.max_hp_edit.text():
+        if not self.name_edit.text() or not self.max_hp_edit.hasAcceptableInput():
             self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(False)
         else:
             self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(True)
 
     def accept(self):
         self.creature.name = self.name_edit.text()
-        self.creature.max_hp = int(self.max_hp_edit.text())
+        if self.creature.max_hp_generator != self.max_hp_edit.text():
+            self.creature.max_hp_generator = self.max_hp_edit.text()
+            self.creature.evaluated_max_hp = None
         super().accept()
 
 
@@ -138,7 +239,7 @@ class DamageDialog(QtWidgets.QDialog):
         self.layout().addWidget(self.damage_label, 0, 0)
 
         self.damage_edit = QtWidgets.QLineEdit(self)
-        self.damage_edit.setValidator(QtGui.QIntValidator(-1000000, 1000000, self))
+        self.damage_edit.setValidator(DValidator(self))
         self.layout().addWidget(self.damage_edit, 0, 1)
         self.damage_edit.textChanged.connect(self.set_ok_enabled)
 
@@ -150,13 +251,13 @@ class DamageDialog(QtWidgets.QDialog):
         self.set_ok_enabled()
 
     def set_ok_enabled(self):
-        if not self.damage_edit.text():
+        if not self.damage_edit.hasAcceptableInput():
             self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(False)
         else:
             self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(True)
 
     def accept(self):
-        self.damage = int(self.damage_edit.text())
+        self.damage = d_eval(self.damage_edit.text())
         super().accept()
 
 
@@ -172,7 +273,7 @@ class InitiativeDialog(QtWidgets.QDialog):
         self.layout().addWidget(self.initiative_label, 0, 0)
 
         self.initiative_edit = QtWidgets.QLineEdit(self)
-        self.initiative_edit.setValidator(QtGui.QIntValidator(-1000000, 1000000, self))
+        self.initiative_edit.setValidator(DValidator(self, allow_empty=True))
         self.layout().addWidget(self.initiative_edit, 0, 1)
         self.initiative_edit.textChanged.connect(self.set_ok_enabled)
 
@@ -184,13 +285,13 @@ class InitiativeDialog(QtWidgets.QDialog):
         self.set_ok_enabled()
 
     def set_ok_enabled(self):
-        if not self.initiative_edit.text():
+        if not self.initiative_edit.hasAcceptableInput():
             self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(False)
         else:
             self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(True)
 
     def accept(self):
-        self.initiative = int(self.initiative_edit.text())
+        self.initiative = d_eval(self.initiative_edit.text()) if self.initiative_edit.text() else None
         super().accept()
 
 
@@ -228,7 +329,7 @@ class TagDialog(QtWidgets.QDialog):
         self.set_ok_enabled()
 
     def set_ok_enabled(self):
-        if not self.name_edit.text():
+        if not self.name_edit.hasAcceptableInput():
             self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(False)
         else:
             self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(True)
@@ -329,7 +430,7 @@ class CreatureListDelegate(QtWidgets.QStyledItemDelegate):
                          metrics.elidedText(creature.name, QtCore.Qt.ElideMiddle, self.NAME_WIDTH))
 
         along += self.NAME_WIDTH
-        hp = creature.max_hp if creature.hp is None else creature.hp
+        hp = max(0, min(creature.max_hp, creature.max_hp - creature.damage_taken))
         ratio = hp / creature.max_hp
         if hp >= creature.max_hp:
             color = QtCore.Qt.green
@@ -408,6 +509,8 @@ class CreatureListSortModel(QtCore.QSortFilterProxyModel):
             return False
         if lcreature.initiative is None:
             return True
+        if lcreature.initiative == rcreature.initiative:
+            return lcreature.name < rcreature.name
         return lcreature.initiative < rcreature.initiative
 
 
@@ -441,7 +544,7 @@ class InitApp(flyingcarpet.App):
         self.centralWidget().layout().addWidget(self.creature_list)
 
         self.add_creature_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("list-add"), "Add Creature")
-        self.add_creature_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.Key_A)
+        self.add_creature_action.setShortcut(QtCore.Qt.Key_Insert)
         self.add_creature_action.triggered.connect(self.add_creature_dialog)
         self.toolBar.addAction(self.add_creature_action)
 
@@ -597,7 +700,9 @@ class InitApp(flyingcarpet.App):
 
     def clone_selected_creature(self):
         for creature in self.selected_creatures:
-            self.add_creature(Creature.from_json(creature.to_json()))
+            creature = Creature.from_json(creature.to_json())
+            creature.evaluated_max_hp = None
+            self.add_creature(creature)
 
     def remove_selected_creatures(self):
         for idx in sorted(self.creature_list.selectedIndexes(), reverse=True):
