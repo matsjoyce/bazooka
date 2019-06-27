@@ -14,7 +14,7 @@ import sly
 import random
 
 
-SAVES_DIR = (pathlib.Path(__file__).parent / "Saves").resolve()
+SAVES_DIR = pathlib.Path("/home/matthew/D&D/Bazooka/Saves")
 CONDITIONS = [
     "blinded",
     "charmed",
