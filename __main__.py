@@ -133,6 +133,7 @@ class Creature:
     death_saves_failure: int = 0
     tags: list = dataclasses.field(default_factory=list)
     completed_round: int = -1
+    xp: int = None
 
     @property
     def max_hp(self):
@@ -206,6 +207,13 @@ class CreatureDialog(QtWidgets.QDialog):
         self.layout().addWidget(self.max_hp_edit, 1, 1)
         self.max_hp_edit.textChanged.connect(self.set_ok_enabled)
 
+        self.xp_label = QtWidgets.QLabel("XP:", self)
+        self.layout().addWidget(self.xp_label, 2, 0)
+
+        self.xp_edit = QtWidgets.QLineEdit(self)
+        self.xp_edit.setValidator(QtGui.QIntValidator(0, 1000000, self))
+        self.layout().addWidget(self.xp_edit, 2, 1)
+
         self.buttonbox = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel, self)
         self.layout().addWidget(self.buttonbox, 100, 0, 1, 2)
         self.buttonbox.accepted.connect(self.accept)
@@ -221,6 +229,7 @@ class CreatureDialog(QtWidgets.QDialog):
 
     def accept(self):
         self.creature.name = self.name_edit.text()
+        self.creature.xp = int(self.xp_edit.text()) if self.xp_edit.text() else None
         if self.creature.max_hp_generator != self.max_hp_edit.text():
             self.creature.max_hp_generator = self.max_hp_edit.text()
             self.creature.evaluated_max_hp = None
@@ -384,6 +393,40 @@ class TagRemoveDialog(QtWidgets.QDialog):
         super().accept()
 
 
+class TimeWarpDialog(QtWidgets.QDialog):
+    def __init__(self, *args, title="Time Warp", creature=None):
+        super().__init__(*args)
+
+        self.setWindowTitle(title)
+
+        self.setLayout(QtWidgets.QGridLayout())
+
+        self.time_label = QtWidgets.QLabel("Time:", self)
+        self.layout().addWidget(self.time_label, 1, 0)
+
+        self.time_edit = QtWidgets.QLineEdit(self)
+        self.time_edit.setValidator(QtGui.QIntValidator(0, 1000000, self))
+        self.time_edit.textChanged.connect(self.set_ok_enabled)
+        self.layout().addWidget(self.time_edit, 1, 1)
+
+        self.buttonbox = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel, self)
+        self.layout().addWidget(self.buttonbox, 100, 0, 1, 2)
+        self.buttonbox.accepted.connect(self.accept)
+        self.buttonbox.rejected.connect(self.reject)
+
+        self.set_ok_enabled()
+
+    def set_ok_enabled(self):
+        if not self.time_edit.hasAcceptableInput():
+            self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(False)
+        else:
+            self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(True)
+
+    def accept(self):
+        self.time = int(self.time_edit.text())
+        super().accept()
+
+
 class CreatureListDelegate(QtWidgets.QStyledItemDelegate):
     NAME_WIDTH = 250
     HP_WIDTH = 75
@@ -478,6 +521,8 @@ class CreatureListDelegate(QtWidgets.QStyledItemDelegate):
                 tags.append((name, COLOR_FOR_TAG.get(name, QtCore.Qt.darkGray)))
             else:
                 tags.append((f"{name}: {time_left}r", COLOR_FOR_TAG.get(name, QtCore.Qt.darkGray)))
+        if creature.xp:
+            tags.append((f"XP: {creature.xp}", QtCore.Qt.darkBlue))
 
         if tags:
             tags.sort()
@@ -609,23 +654,30 @@ class InitApp(flyingcarpet.App):
         self.load_creatures_action.triggered.connect(self.load_creatures)
         self.file_menu.addAction(self.load_creatures_action)
 
-        self.death_saves_menu = QtWidgets.QMenu("Death Saves", self.menuBar)
-        self.menuBar.addMenu(self.death_saves_menu)
+        self.advanced_menu = QtWidgets.QMenu("Advanced", self.menuBar)
+        self.menuBar.addMenu(self.advanced_menu)
 
         self.add_death_save_success_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("emblem-success"), "Add Death Save Success")
         self.add_death_save_success_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.SHIFT | QtCore.Qt.Key_S)
         self.add_death_save_success_action.triggered.connect(lambda: self.add_death_save_to_selected_creatures(success=True))
-        self.death_saves_menu.addAction(self.add_death_save_success_action)
+        self.advanced_menu.addAction(self.add_death_save_success_action)
 
         self.add_death_save_failure_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("emblem-error"), "Add Death Save Failure")
         self.add_death_save_failure_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.SHIFT | QtCore.Qt.Key_F)
         self.add_death_save_failure_action.triggered.connect(lambda: self.add_death_save_to_selected_creatures(success=False))
-        self.death_saves_menu.addAction(self.add_death_save_failure_action)
+        self.advanced_menu.addAction(self.add_death_save_failure_action)
 
         self.clear_death_saves_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("edit-clear-all"), "Clear Death Saves")
         self.clear_death_saves_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.SHIFT | QtCore.Qt.Key_C)
         self.clear_death_saves_action.triggered.connect(self.clear_death_saves_from_selected_creatures)
-        self.death_saves_menu.addAction(self.clear_death_saves_action)
+        self.advanced_menu.addAction(self.clear_death_saves_action)
+
+        self.advanced_menu.addSeparator()
+
+        self.time_warp_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("media-skip-forward-symbolic"), "Time Warp")
+        self.time_warp_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.SHIFT | QtCore.Qt.Key_T)
+        self.time_warp_action.triggered.connect(self.time_warp)
+        self.advanced_menu.addAction(self.time_warp_action)
 
         self.ret_shortcut = QtWidgets.QShortcut(QtCore.Qt.Key_Return, self)
         self.ret_shortcut.activated.connect(self.edit_selected_creature)
@@ -634,7 +686,8 @@ class InitApp(flyingcarpet.App):
             self.add_creature(creature)
         if fname is None:
             self.fname = str((SAVES_DIR / datetime.datetime.now().strftime("%H:%M %d-%m-%Y.json")).resolve())
-            self.current_round = -1
+            self._current_round = -1
+            self.xp_gained = 0
         else:
             self.load(fname=fname)
 
@@ -654,6 +707,15 @@ class InitApp(flyingcarpet.App):
     @current_round.setter
     def current_round(self, value):
         self._current_round = value
+        self.update_info_label()
+
+    @property
+    def xp_gained(self):
+        return self._xp_gained
+
+    @xp_gained.setter
+    def xp_gained(self, value):
+        self._xp_gained = value
         self.update_info_label()
 
     @property
@@ -677,15 +739,14 @@ class InitApp(flyingcarpet.App):
         return {idx.data(QtCore.Qt.UserRole): idx for idx in self.creature_list.selectedIndexes()}
 
     def update_info_label(self):
-        if self.current_round > 0:
-            self.info_label.setText(f"Round: {self.current_round}")
-        else:
-            self.info_label.setText(f"Round: Not yet started")
+        round = self.current_round if self.current_round > 0 else "Not yet started"
+        self.info_label.setText(f"Round: {round} | XP: {self.xp_gained}")
 
     def to_json(self):
         return {
             "creatures": [creature.to_json() for creature in self.creatures],
-            "current_round": self.current_round
+            "current_round": self.current_round,
+            "xp_gained": self.xp_gained
         }
 
     def add_creature_dialog(self):
@@ -705,8 +766,9 @@ class InitApp(flyingcarpet.App):
             self.add_creature(creature)
 
     def remove_selected_creatures(self):
-        for idx in sorted(self.creature_list.selectedIndexes(), reverse=True):
+        for creature, idx in sorted(self.selected_creatures_to_index.items(), reverse=True, key=lambda x: x[1]):
             self.creature_model.removeRow(self.creature_sort_model.mapToSource(idx).row())
+            self.xp_gained += creature.xp or 0
 
     def damage_selected_creatures(self):
         scti = self.selected_creatures_to_index
@@ -825,6 +887,17 @@ class InitApp(flyingcarpet.App):
             creature.death_saves_success = creature.death_saves_failure = 0
             self.creature_model.itemFromIndex(self.creature_sort_model.mapToSource(idx)).emitDataChanged()
 
+    def time_warp(self):
+        dia = TimeWarpDialog(self)
+        if not dia.exec_():
+            return
+
+        cl = len([c for c in self.creatures if c.initiative is not None])
+
+        for _ in range(dia.time):
+            for _ in range(cl):
+                self.next_turn()
+
     def load(self, *, fname=None):
         if fname is None:
             fname = QtWidgets.QFileDialog.getOpenFileName(self, "Open", str(SAVES_DIR), "Json Files (*.json)")[0]
@@ -839,6 +912,7 @@ class InitApp(flyingcarpet.App):
         for creature in data["creatures"]:
             self.add_creature(Creature.from_json(creature))
         self.current_round = data.get("current_round", 1)
+        self.xp_gained = data.get("xp_gained", 0)
 
     def load_creatures(self):
         fname = QtWidgets.QFileDialog.getOpenFileName(self, "Open", str(SAVES_DIR), "Json Files (*.json)")[0]
