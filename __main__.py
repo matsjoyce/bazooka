@@ -12,6 +12,7 @@ import pathlib
 import datetime
 import sly
 import random
+import json
 
 
 SAVES_DIR = pathlib.Path("/home/matthew/D&D/Bazooka/Saves")
@@ -698,7 +699,7 @@ class InitApp(flyingcarpet.App):
     @fname.setter
     def fname(self, value):
         self._fname = value
-        self.setWindowTitle(f"{self.NAME} - {pathlib.Path(self.fname).resolve().relative_to(SAVES_DIR)}")
+        self.setWindowTitle(f"{self.NAME} - {pathlib.Path(self.fname).stem}")
 
     @property
     def current_round(self):
