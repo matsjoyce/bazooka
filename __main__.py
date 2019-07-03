@@ -901,7 +901,7 @@ class InitApp(flyingcarpet.App):
 
     def load(self, *, fname=None):
         if fname is None:
-            fname = QtWidgets.QFileDialog.getOpenFileName(self, "Open", str(SAVES_DIR), "Json Files (*.json)")[0]
+            fname = QtWidgets.QFileDialog.getOpenFileName(self, "Open", str(pathlib.Path(self.fname).parent), "Json Files (*.json)")[0]
             if not fname:
                 return
 
@@ -916,7 +916,7 @@ class InitApp(flyingcarpet.App):
         self.xp_gained = data.get("xp_gained", 0)
 
     def load_creatures(self):
-        fname = QtWidgets.QFileDialog.getOpenFileName(self, "Open", str(SAVES_DIR), "Json Files (*.json)")[0]
+        fname = QtWidgets.QFileDialog.getOpenFileName(self, "Open", str(pathlib.Path(self.fname).parent), "Json Files (*.json)")[0]
         if not fname:
             return
 
