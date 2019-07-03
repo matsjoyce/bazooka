@@ -475,15 +475,15 @@ class CreatureListDelegate(QtWidgets.QStyledItemDelegate):
 
         along += self.NAME_WIDTH
         hp = max(0, min(creature.max_hp, creature.max_hp - creature.damage_taken))
-        ratio = hp / creature.max_hp
-        if hp >= creature.max_hp:
-            color = QtCore.Qt.green
-        elif ratio > 0.5:
-            color = QtCore.Qt.darkGreen
-        elif hp > 0:
-            color = QtCore.Qt.darkYellow
-        else:
+        ratio = hp / creature.max_hp if creature.max_hp else 0
+        if hp <= 0:
             color = QtCore.Qt.red
+        elif ratio <= 0.5:
+            color = QtCore.Qt.darkYellow
+        elif hp < creature.max_hp:
+            color = QtCore.Qt.darkGreen
+        else:
+            color = QtCore.Qt.green
         painter.setPen(color)
         first_width = larger_metrics.width(str(hp))
         painter.setFont(larger_font)
