@@ -157,6 +157,7 @@ class Creature:
 
     @classmethod
     def from_json(cls, data):
+        data.pop("hp", None)
         obj = cls(**data)
         obj.tags = [tuple(t) for t in obj.tags]
         return obj
