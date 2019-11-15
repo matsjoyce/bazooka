@@ -13,6 +13,8 @@ import datetime
 import sly
 import random
 import json
+import re
+import traceback
 
 
 SAVES_DIR = pathlib.Path("/home/matthew/D&D/Bazooka/Saves")
@@ -161,6 +163,11 @@ class Creature:
         obj = cls(**data)
         obj.tags = [tuple(t) for t in obj.tags]
         return obj
+
+    def clone(self):
+        creature = self.from_json(self.to_json())
+        creature.evaluated_max_hp = None
+        return creature
 
     def __hash__(self):
         return id(self)
@@ -429,6 +436,36 @@ class TimeWarpDialog(QtWidgets.QDialog):
         super().accept()
 
 
+class QACDialog(QtWidgets.QDialog):
+    def __init__(self, *args, title="QAC", creature=None):
+        super().__init__(*args)
+
+        self.setWindowTitle(title)
+
+        self.setLayout(QtWidgets.QGridLayout())
+
+        self.qac_edit = QtWidgets.QPlainTextEdit(self)
+        self.qac_edit.textChanged.connect(self.set_ok_enabled)
+        self.layout().addWidget(self.qac_edit, 0, 0)
+
+        self.buttonbox = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel, self)
+        self.layout().addWidget(self.buttonbox, 100, 0, 1, 2)
+        self.buttonbox.accepted.connect(self.accept)
+        self.buttonbox.rejected.connect(self.reject)
+
+        self.set_ok_enabled()
+
+    def set_ok_enabled(self):
+        if not self.qac_edit.toPlainText():
+            self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(False)
+        else:
+            self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(True)
+
+    def accept(self):
+        self.qac = self.qac_edit.toPlainText()
+        super().accept()
+
+
 class CreatureListDelegate(QtWidgets.QStyledItemDelegate):
     NAME_WIDTH = 250
     HP_WIDTH = 75
@@ -630,6 +667,11 @@ class InitApp(flyingcarpet.App):
         self.next_turn_action.triggered.connect(self.next_turn)
         self.toolBar.addAction(self.next_turn_action)
 
+        self.quikaddcode_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("format-text-code"), "QA Code")
+        self.quikaddcode_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.Key_Insert)
+        self.quikaddcode_action.triggered.connect(self.quikaddcode)
+        self.toolBar.addAction(self.quikaddcode_action)
+
         self.toolBar.addSeparator()
 
         self.info_label = QtWidgets.QLabel(self)
@@ -763,9 +805,7 @@ class InitApp(flyingcarpet.App):
 
     def clone_selected_creature(self):
         for creature in self.selected_creatures:
-            creature = Creature.from_json(creature.to_json())
-            creature.evaluated_max_hp = None
-            self.add_creature(creature)
+            self.add_creature(creature.clone())
 
     def remove_selected_creatures(self):
         for creature, idx in sorted(self.selected_creatures_to_index.items(), reverse=True, key=lambda x: x[1]):
@@ -937,6 +977,42 @@ class InitApp(flyingcarpet.App):
             self.fname = fname[0]
             with open(fname[0], "w") as f:
                 json.dump(self.to_json(), f, indent=4)
+
+    def quikaddcode(self):
+        dia = QACDialog(self)
+        if not dia.exec_():
+            return
+        code = [x.strip() for x in re.split("[;\n]", dia.qac) if x.strip()]
+        code = [(x[0], x[1:].strip()) for x in code]
+        creatures = []
+        try:
+            for op, arg in code:
+                if op == "a":
+                    creatures.append(Creature(name=arg))
+                elif op == "h":
+                    d_eval(arg) # make sure it parses!
+                    creatures[-1].max_hp_generator = arg
+                elif op == "i":
+                    creatures[-1].initiative = d_eval(arg)
+                elif op == "x":
+                    creatures[-1].xp = int(arg)
+                elif op == "c":
+                    for _ in range(int(arg)):
+                        creatures.append(creatures[-1].clone())
+                elif op == "t":
+                    if ":" in arg:
+                        tag, rounds = arg.split(":", 1)
+                        rounds = int(rounds)
+                    else:
+                        tag, rounds = arg, None
+                    creatures[-1].tags.append((tag, rounds))
+        except Exception:
+            QtWidgets.QMessageBox.warning(self, "QAC Failed", "".join(traceback.format_exc()), QtWidgets.QMessageBox.Ok)
+        else:
+            for creature in creatures:
+                if not creature.max_hp_generator:
+                    creature.max_hp_generator = "1"
+                self.add_creature(creature)
 
 
 if __name__ == "__main__":
