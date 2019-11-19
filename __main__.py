@@ -15,9 +15,12 @@ import random
 import json
 import re
 import traceback
+import enum
 
 
-SAVES_DIR = pathlib.Path("/home/matthew/D&D/Bazooka/Saves")
+BASE_DIR = pathlib.Path("/home/matthew/D&D/Bazooka")
+SAVES_DIR = BASE_DIR / "Saves"
+SHEETS_DIR = BASE_DIR / "Sheets"
 CONDITIONS = [
     "blinded",
     "charmed",
@@ -54,6 +57,19 @@ COLOR_FOR_TAG.update({o: QtCore.Qt.darkYellow for o in OTHERS})
 
 TAG_COMPLETIONS = sorted(CONDITIONS + OTHERS)
 
+LOADED_STAT_SHEETS = {}
+
+
+def load_stat_from_sheet(sheet, name):
+    if sheet not in LOADED_STAT_SHEETS:
+        with open(SHEETS_DIR / (sheet + ".json")) as f:
+            LOADED_STAT_SHEETS[sheet] = json.load(f)
+    return LOADED_STAT_SHEETS[sheet][name]
+
+
+class DEvalMode(enum.Enum):
+    normal, average = range(2)
+
 
 class DLexer(sly.Lexer):
     tokens = {NUMBER, D, PLUS, MINUS, LPAREN, RPAREN}
@@ -77,6 +93,10 @@ class DLexer(sly.Lexer):
 class DParser(sly.Parser):
     tokens = DLexer.tokens
 
+    def __init__(self, mode):
+        super().__init__()
+        self.mode = mode
+
     @_("factor")
     def expr(self, p):
         return p.factor
@@ -99,7 +119,10 @@ class DParser(sly.Parser):
 
     @_("atom D atom")
     def factor(self, p):
-        return sum(random.randrange(1, p.atom1 + 1) for i in range(p.atom0))
+        if self.mode is DEvalMode.normal:
+            return sum(random.randrange(1, p.atom1 + 1) for i in range(p.atom0))
+        else:
+            return p.atom0 * (p.atom1 + 1) / 2
 
     @_("NUMBER")
     def atom(self, p):
@@ -121,8 +144,8 @@ class DParser(sly.Parser):
         raise self.ParserError()
 
 
-def d_eval(str, lexer=DLexer(), parser=DParser()):
-    return DParser().parse(DLexer().tokenize(str))
+def d_eval(str, mode=DEvalMode.normal):
+    return int(DParser(mode).parse(DLexer().tokenize(str)))
 
 
 @dataclasses.dataclass
@@ -219,7 +242,7 @@ class CreatureDialog(QtWidgets.QDialog):
         self.xp_label = QtWidgets.QLabel("XP:", self)
         self.layout().addWidget(self.xp_label, 2, 0)
 
-        self.xp_edit = QtWidgets.QLineEdit(self)
+        self.xp_edit = QtWidgets.QLineEdit(str(self.creature.xp) if self.creature.xp is not None else "", self)
         self.xp_edit.setValidator(QtGui.QIntValidator(0, 1000000, self))
         self.layout().addWidget(self.xp_edit, 2, 1)
 
@@ -497,7 +520,7 @@ class CreatureListDelegate(QtWidgets.QStyledItemDelegate):
                                                                          rect.bottomLeft() + QtCore.QPoint(self.TURN_MARKER_WIDTH + along, 0)))
 
         along += self.TURN_MARKER_WIDTH
-        if creature.initiative:
+        if creature.initiative is not None:
             painter.setFont(larger_font)
             painter.drawText(QtCore.QRectF(rect.topLeft() + QtCore.QPoint(along, 0),
                                            rect.bottomLeft() + QtCore.QPoint(self.INITIATIVE_WIDTH + along, 0)),
@@ -985,13 +1008,17 @@ class InitApp(flyingcarpet.App):
         code = [x.strip() for x in re.split("[;\n]", dia.qac) if x.strip()]
         code = [(x[0], x[1:].strip()) for x in code]
         creatures = []
+        hp_de_mode = DEvalMode.normal
         try:
             for op, arg in code:
                 if op == "a":
                     creatures.append(Creature(name=arg))
                 elif op == "h":
-                    d_eval(arg) # make sure it parses!
-                    creatures[-1].max_hp_generator = arg
+                    val = d_eval(arg, mode=hp_de_mode)
+                    if hp_de_mode is DEvalMode.normal:
+                        creatures[-1].max_hp_generator = arg
+                    else:
+                        creatures[-1].max_hp_generator = str(val)
                 elif op == "i":
                     creatures[-1].initiative = d_eval(arg)
                 elif op == "x":
@@ -1006,6 +1033,26 @@ class InitApp(flyingcarpet.App):
                     else:
                         tag, rounds = arg, None
                     creatures[-1].tags.append((tag, rounds))
+                elif op == "s":
+                    sheet, name = arg.split(":", 1)
+                    data = load_stat_from_sheet(sheet, name)
+                    tags = []
+                    for tag in data.get("tags", []):
+                        if ":" in tag:
+                            tag, rounds = tag.split(":", 1)
+                            rounds = int(rounds)
+                        else:
+                            tag, rounds = tag, None
+                        tags.append((tag, rounds))
+                    init = d_eval(data["init"]) if "init" in data else None
+                    hp = data["hp"] if hp_de_mode is DEvalMode.normal else str(d_eval(data["hp"], mode=hp_de_mode))
+                    creatures.append(Creature(name=name, max_hp_generator=hp, xp=data.get("xp"), initiative=init, tags=tags))
+                elif op == "e":
+                    if arg == "hn":
+                        hp_de_mode = DEvalMode.normal
+                    elif arg == "ha":
+                        hp_de_mode = DEvalMode.average
+
         except Exception:
             QtWidgets.QMessageBox.warning(self, "QAC Failed", "".join(traceback.format_exc()), QtWidgets.QMessageBox.Ok)
         else:
