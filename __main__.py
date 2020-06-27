@@ -275,14 +275,15 @@ class CreatureDialog(QtWidgets.QDialog):
 
 
 class DamageDialog(QtWidgets.QDialog):
-    def __init__(self, *args, title="Damage Creatures"):
+    def __init__(self, *args, title=None, heal=False):
         super().__init__(*args)
 
-        self.setWindowTitle(title)
+        self.setWindowTitle(title if title is not None else ["Damage Creatures", "Heal Creatures"][heal])
+        self.heal = heal
 
         self.setLayout(QtWidgets.QGridLayout())
 
-        self.damage_label = QtWidgets.QLabel("Damage:", self)
+        self.damage_label = QtWidgets.QLabel(["Damage:", "Healing:"][heal], self)
         self.layout().addWidget(self.damage_label, 0, 0)
 
         self.damage_edit = QtWidgets.QLineEdit(self)
@@ -305,6 +306,8 @@ class DamageDialog(QtWidgets.QDialog):
 
     def accept(self):
         self.damage = d_eval(self.damage_edit.text())
+        if self.heal:
+            self.damage *= -1
         super().accept()
 
 
@@ -610,8 +613,8 @@ class CreatureListDelegate(QtWidgets.QStyledItemDelegate):
                 widths[widths.index(max(widths))] -= 1
 
             for width, (text, color) in zip(widths, tags):
-                trect = QtCore.QRectF(rect.topLeft() + QtCore.QPoint(along, 0),
-                                    rect.bottomLeft() + QtCore.QPoint(width + 4 + along, 0))
+                trect = QtCore.QRectF(rect.topLeft() + QtCore.QPointF(along, 0),
+                                      rect.bottomLeft() + QtCore.QPointF(width + 4 + along, 0))
                 trect = trect.adjusted(0, height_adj, 0, -height_adj)
                 painter.setBrush(color)
                 painter.setPen(color)
@@ -684,6 +687,11 @@ class InitApp(flyingcarpet.App):
         self.damage_creatures_action.triggered.connect(self.damage_selected_creatures)
         self.toolBar.addAction(self.damage_creatures_action)
 
+        self.heal_creatures_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("smiley-add"), "Heal Creatures")
+        self.heal_creatures_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.Key_H)
+        self.heal_creatures_action.triggered.connect(lambda: self.damage_selected_creatures(heal=True))
+        self.toolBar.addAction(self.heal_creatures_action)
+
         self.set_initiative_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("clock"), "Set Initiative")
         self.set_initiative_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.Key_I)
         self.set_initiative_action.triggered.connect(self.set_initiative_for_selected_creatures)
@@ -737,6 +745,13 @@ class InitApp(flyingcarpet.App):
 
         self.advanced_menu = QtWidgets.QMenu("Advanced", self.menuBar)
         self.menuBar.addMenu(self.advanced_menu)
+
+        self.remove_creatures_noxp_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("list-remove"), "Remove Creatures without granting XP")
+        self.remove_creatures_noxp_action.setShortcut(QtCore.Qt.SHIFT | QtCore.Qt.Key_Delete)
+        self.remove_creatures_noxp_action.triggered.connect(lambda: self.remove_selected_creatures(noxp=True))
+        self.advanced_menu.addAction(self.remove_creatures_noxp_action)
+
+        self.advanced_menu.addSeparator()
 
         self.add_death_save_success_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("emblem-success"), "Add Death Save Success")
         self.add_death_save_success_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.SHIFT | QtCore.Qt.Key_S)
@@ -805,7 +820,7 @@ class InitApp(flyingcarpet.App):
 
     @property
     def creature_indexes(self):
-        return [self.creature_model.index(row, 0) for row in range(self.creature_model.rowCount())]
+        return [self.creature_sort_model.mapToSource(self.creature_sort_model.index(row, 0)) for row in range(self.creature_sort_model.rowCount())]
 
     @property
     def creatures_to_index(self):
@@ -844,17 +859,18 @@ class InitApp(flyingcarpet.App):
         for creature in self.selected_creatures:
             self.add_creature(creature.clone())
 
-    def remove_selected_creatures(self):
+    def remove_selected_creatures(self, noxp=False):
         for creature, idx in sorted(self.selected_creatures_to_index.items(), reverse=True, key=lambda x: x[1]):
             self.creature_model.removeRow(self.creature_sort_model.mapToSource(idx).row())
-            self.xp_gained += creature.xp or 0
+            if not noxp:
+                self.xp_gained += creature.xp or 0
 
-    def damage_selected_creatures(self):
+    def damage_selected_creatures(self, heal=False):
         scti = self.selected_creatures_to_index
         if not scti:
             return
 
-        dia = DamageDialog(self)
+        dia = DamageDialog(self, heal=heal)
         if dia.exec_():
             print("Damage =>", dia.damage)
             for creature, idx in scti.items():
