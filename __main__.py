@@ -503,7 +503,8 @@ class CreatureListDelegate(QtWidgets.QStyledItemDelegate):
     HP_WIDTH = 75
     INITIATIVE_WIDTH = 50
     TURN_MARKER_WIDTH = 24
-    DEATH_SAVES_WIDTH = 30
+    DEATH_SAVES_WIDTH = 40
+    DEATH_SAVE_WIDTH = 10
 
     LARGE_FONT_SIZE = 18
 
@@ -576,15 +577,17 @@ class CreatureListDelegate(QtWidgets.QStyledItemDelegate):
                              f"HP - {creature.damage_taken}")
 
         along += self.HP_WIDTH
-        painter.setPen(QtCore.Qt.black)
+        painter.setPen(QtCore.Qt.transparent)
         if creature.death_saves_success or creature.death_saves_failure:
-            width_per_dot = self.DEATH_SAVES_WIDTH / 3
+            width_per_dot = self.DEATH_SAVE_WIDTH
             height_per_dot = rect.height() / 2
             dot_size = min(width_per_dot, height_per_dot) - 2
             for y in range(2):
-                for x in range(creature.death_saves_failure if y else creature.death_saves_success):
-                    painter.setBrush(QtCore.Qt.darkRed if y else QtCore.Qt.darkGreen)
-                    painter.setPen(QtCore.Qt.darkRed if y else QtCore.Qt.darkGreen)
+                for x in range(3):
+                    if x < (creature.death_saves_failure if y else creature.death_saves_success):
+                        painter.setBrush(QtCore.Qt.darkRed if y else QtCore.Qt.darkGreen)
+                    else:
+                        painter.setBrush(QtGui.QColor(0, 0, 0, 30))
                     point = rect.topLeft() + QtCore.QPointF(along + width_per_dot * (x + 0.5), height_per_dot * (y + 0.5))
                     painter.drawEllipse(QtCore.QRectF(point - QtCore.QPointF(dot_size / 2, dot_size / 2),
                                                       point + QtCore.QPointF(dot_size / 2, dot_size / 2)))
