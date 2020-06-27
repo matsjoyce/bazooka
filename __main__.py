@@ -145,6 +145,8 @@ class DParser(sly.Parser):
 
 
 def d_eval(str, mode=DEvalMode.normal):
+    if not str:
+        return None
     return int(DParser(mode).parse(DLexer().tokenize(str)))
 
 
@@ -165,11 +167,15 @@ class Creature:
     def max_hp(self):
         if self.evaluated_max_hp is None:
             self.evaluated_max_hp = d_eval(self.max_hp_generator)
-            self.damage_taken = min(self.evaluated_max_hp, self.damage_taken)
+            if self.evaluated_max_hp is not None:
+                self.damage_taken = min(self.evaluated_max_hp, self.damage_taken)
         return self.evaluated_max_hp
 
     def apply_damage(self, damage):
-        self.damage_taken = min(self.max_hp, max(0, self.damage_taken + damage))
+        if self.max_hp is not None:
+            self.damage_taken = min(self.max_hp, max(0, self.damage_taken + damage))
+        else:
+            self.damage_taken = max(0, self.damage_taken + damage)
 
     def start_turn(self):
         self.tags = [(n, None if t is None else (t - 1)) for n, t in self.tags if t is None or t > 1]
@@ -235,7 +241,7 @@ class CreatureDialog(QtWidgets.QDialog):
         self.layout().addWidget(self.max_hp_label, 1, 0)
 
         self.max_hp_edit = QtWidgets.QLineEdit(self.creature.max_hp_generator, self)
-        self.max_hp_edit.setValidator(DValidator(self))
+        self.max_hp_edit.setValidator(DValidator(self, allow_empty=True))
         self.layout().addWidget(self.max_hp_edit, 1, 1)
         self.max_hp_edit.textChanged.connect(self.set_ok_enabled)
 
@@ -332,7 +338,7 @@ class InitiativeDialog(QtWidgets.QDialog):
             self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(True)
 
     def accept(self):
-        self.initiative = d_eval(self.initiative_edit.text()) if self.initiative_edit.text() else None
+        self.initiative = d_eval(self.initiative_edit.text())
         super().accept()
 
 
@@ -535,28 +541,36 @@ class CreatureListDelegate(QtWidgets.QStyledItemDelegate):
                          metrics.elidedText(creature.name, QtCore.Qt.ElideMiddle, self.NAME_WIDTH))
 
         along += self.NAME_WIDTH
-        hp = max(0, min(creature.max_hp, creature.max_hp - creature.damage_taken))
-        ratio = hp / creature.max_hp if creature.max_hp else 0
-        if hp <= 0:
-            color = QtCore.Qt.red
-        elif ratio <= 0.5:
-            color = QtCore.Qt.darkYellow
-        elif hp < creature.max_hp:
-            color = QtCore.Qt.darkGreen
-        else:
-            color = QtCore.Qt.green
-        painter.setPen(color)
-        first_width = larger_metrics.width(str(hp))
-        painter.setFont(larger_font)
-        painter.drawText(QtCore.QRectF(rect.topLeft() + QtCore.QPoint(along, 0),
-                                       rect.bottomLeft() + QtCore.QPoint(self.HP_WIDTH + along + first_width, 0)),
-                         QtCore.Qt.AlignVCenter,
-                         str(hp))
-        painter.setFont(normal_font)
-        painter.drawText(QtCore.QRectF(rect.topLeft() + QtCore.QPoint(along + first_width, (larger_metrics.height() - metrics.height()) / 2),
-                                       rect.bottomLeft() + QtCore.QPoint(self.HP_WIDTH + along + first_width, 0)),
-                         QtCore.Qt.AlignVCenter,
-                         metrics.elidedText(f" / {creature.max_hp}", QtCore.Qt.ElideRight, self.HP_WIDTH - first_width))
+        if creature.max_hp is not None:
+            hp = max(0, min(creature.max_hp, creature.max_hp - creature.damage_taken))
+            ratio = hp / creature.max_hp if creature.max_hp else 0
+            if hp <= 0:
+                color = QtCore.Qt.red
+            elif ratio <= 0.5:
+                color = QtCore.Qt.darkYellow
+            elif hp < creature.max_hp:
+                color = QtCore.Qt.darkGreen
+            else:
+                color = QtCore.Qt.green
+
+            painter.setPen(color)
+            first_width = larger_metrics.width(str(hp))
+            painter.setFont(larger_font)
+            painter.drawText(QtCore.QRectF(rect.topLeft() + QtCore.QPointF(along, 0),
+                                           rect.bottomLeft() + QtCore.QPointF(self.HP_WIDTH + along, 0)),
+                             QtCore.Qt.AlignVCenter,
+                             str(hp))
+            painter.setFont(normal_font)
+            painter.drawText(QtCore.QRectF(rect.topLeft() + QtCore.QPointF(along + first_width, (larger_metrics.height() - metrics.height()) / 2),
+                                           rect.bottomLeft() + QtCore.QPointF(self.HP_WIDTH + along, 0)),
+                             QtCore.Qt.AlignVCenter,
+                             metrics.elidedText(f" / {creature.max_hp}", QtCore.Qt.ElideRight, self.HP_WIDTH - first_width))
+        elif creature.damage_taken:
+            painter.setPen(QtCore.Qt.darkRed)
+            painter.drawText(QtCore.QRectF(rect.topLeft() + QtCore.QPointF(along, 0),
+                                           rect.bottomLeft() + QtCore.QPointF(self.HP_WIDTH + along, 0)),
+                             QtCore.Qt.AlignVCenter,
+                             f"HP - {creature.damage_taken}")
 
         along += self.HP_WIDTH
         painter.setPen(QtCore.Qt.black)
@@ -1044,7 +1058,7 @@ class InitApp(flyingcarpet.App):
                         else:
                             tag, rounds = tag, None
                         tags.append((tag, rounds))
-                    init = d_eval(data["init"]) if "init" in data else None
+                    init = d_eval(data.get("init"))
                     hp = data["hp"] if hp_de_mode is DEvalMode.normal else str(d_eval(data["hp"], mode=hp_de_mode))
                     creatures.append(Creature(name=name, max_hp_generator=hp, xp=data.get("xp"), initiative=init, tags=tags))
                 elif op == "e":
