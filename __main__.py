@@ -16,6 +16,7 @@ import json
 import re
 import traceback
 import enum
+import time
 
 
 BASE_DIR = pathlib.Path("/home/matthew/D&D/Bazooka")
@@ -726,6 +727,10 @@ class InitApp(flyingcarpet.App):
         self.toolBar.addWidget(self.info_label)
         self.toolBar.setStyleSheet("QLabel { padding: 8px; }")
 
+        self.info_timer = QtCore.QTimer(self)
+        self.info_timer.timeout.connect(self.update_info_label)
+        self.info_timer.start(60 * 1000)
+
         self.file_menu = QtWidgets.QMenu("File", self.menuBar)
         self.menuBar.addMenu(self.file_menu)
 
@@ -778,6 +783,10 @@ class InitApp(flyingcarpet.App):
         self.time_warp_action.triggered.connect(self.time_warp)
         self.advanced_menu.addAction(self.time_warp_action)
 
+        self.reset_start_time_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("clock"), "Reset Timer")
+        self.reset_start_time_action.triggered.connect(self.reset_start_time)
+        self.advanced_menu.addAction(self.reset_start_time_action)
+
         self.ret_shortcut = QtWidgets.QShortcut(QtCore.Qt.Key_Return, self)
         self.ret_shortcut.activated.connect(self.edit_selected_creature)
 
@@ -786,6 +795,7 @@ class InitApp(flyingcarpet.App):
         if fname is None:
             self.fname = str((SAVES_DIR / datetime.datetime.now().strftime("%H:%M %d-%m-%Y.json")).resolve())
             self._current_round = -1
+            self.start_time = time.time()
             self.xp_gained = 0
         else:
             self.load(fname=fname)
@@ -839,13 +849,16 @@ class InitApp(flyingcarpet.App):
 
     def update_info_label(self):
         round = self.current_round if self.current_round > 0 else "Not yet started"
-        self.info_label.setText(f"Round: {round} | XP: {self.xp_gained}")
+        time_passed = time.time() - self.start_time
+        h, m = divmod(int(time_passed) // 60, 60)
+        self.info_label.setText(f"Round: {round} | XP: {self.xp_gained} | {h}:{m:02}")
 
     def to_json(self):
         return {
             "creatures": [creature.to_json() for creature in self.creatures],
             "current_round": self.current_round,
-            "xp_gained": self.xp_gained
+            "xp_gained": self.xp_gained,
+            "start_time": self.start_time
         }
 
     def add_creature_dialog(self):
@@ -996,6 +1009,10 @@ class InitApp(flyingcarpet.App):
             for _ in range(cl):
                 self.next_turn()
 
+    def reset_start_time(self):
+        self.start_time = time.time()
+        self.update_info_label()
+
     def load(self, *, fname=None):
         if fname is None:
             fname = QtWidgets.QFileDialog.getOpenFileName(self, "Open", str(pathlib.Path(self.fname).parent), "Json Files (*.json)")[0]
@@ -1011,6 +1028,8 @@ class InitApp(flyingcarpet.App):
             self.add_creature(Creature.from_json(creature))
         self.current_round = data.get("current_round", 1)
         self.xp_gained = data.get("xp_gained", 0)
+        self.start_time = data.get("start_time", time.time())
+        self.update_info_label()
 
     def load_creatures(self):
         fname = QtWidgets.QFileDialog.getOpenFileName(self, "Open", str(pathlib.Path(self.fname).parent), "Json Files (*.json)")[0]
