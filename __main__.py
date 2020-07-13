@@ -120,6 +120,8 @@ class DParser(sly.Parser):
 
     @_("atom D atom")
     def factor(self, p):
+        if not p.atom1:
+            return 0
         if self.mode is DEvalMode.normal:
             return sum(random.randrange(1, p.atom1 + 1) for i in range(p.atom0))
         else:
@@ -901,9 +903,10 @@ class InitApp(flyingcarpet.App):
         dia = InitiativeDialog(self)
         if dia.exec_():
             print("Initiative =>", dia.initiative)
-            for creature, idx in scti.items():
+            idxes = []
+            for creature, idx in [(c, self.creature_model.itemFromIndex(self.creature_sort_model.mapToSource(i))) for c, i in scti.items()]:
                 creature.initiative = dia.initiative
-                self.creature_model.itemFromIndex(self.creature_sort_model.mapToSource(idx)).emitDataChanged()
+                idx.emitDataChanged()
 
     def edit_selected_creature(self):
         selected_idxs = self.creature_list.selectedIndexes()
