@@ -18,6 +18,8 @@ import traceback
 import enum
 import time
 
+from .planarally import PlanarAllyIntegration
+
 
 BASE_DIR = pathlib.Path("/home/matthew/D&D/Bazooka")
 SAVES_DIR = BASE_DIR / "Saves"
@@ -173,6 +175,11 @@ class Creature:
             if self.evaluated_max_hp is not None:
                 self.damage_taken = min(self.evaluated_max_hp, self.damage_taken)
         return self.evaluated_max_hp
+
+    @property
+    def hp(self):
+        if self.max_hp is not None:
+            return max(0, min(self.max_hp, self.max_hp - self.damage_taken))
 
     def apply_damage(self, damage):
         if self.max_hp is not None:
@@ -549,7 +556,7 @@ class CreatureListDelegate(QtWidgets.QStyledItemDelegate):
 
         along += self.NAME_WIDTH
         if creature.max_hp is not None:
-            hp = max(0, min(creature.max_hp, creature.max_hp - creature.damage_taken))
+            hp = creature.hp
             ratio = hp / creature.max_hp if creature.max_hp else 0
             if hp <= 0:
                 color = QtCore.Qt.red
@@ -658,6 +665,8 @@ class InitApp(flyingcarpet.App):
     def __init__(self, creatures=[], fname=None):
         super().__init__(maximized=True, with_toolbar=True)
 
+        self.pa_integration = None
+
         self.creature_list = QtWidgets.QListView(self)
         self.creature_model = QtGui.QStandardItemModel(self)
         self.creature_sort_model = CreatureListSortModel(self)
@@ -717,6 +726,9 @@ class InitApp(flyingcarpet.App):
         self.next_turn_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.Key_N)
         self.next_turn_action.triggered.connect(self.next_turn)
         self.toolBar.addAction(self.next_turn_action)
+
+        self.next_turn_alt = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Tab), self)
+        self.next_turn_alt.activated.connect(self.next_turn)
 
         self.quikaddcode_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("format-text-code"), "QA Code")
         self.quikaddcode_action.setShortcut(QtCore.Qt.CTRL | QtCore.Qt.Key_Insert)
@@ -788,6 +800,17 @@ class InitApp(flyingcarpet.App):
         self.reset_start_time_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("clock"), "Reset Timer")
         self.reset_start_time_action.triggered.connect(self.reset_start_time)
         self.advanced_menu.addAction(self.reset_start_time_action)
+
+        self.advanced_menu.addSeparator()
+
+        self.start_pa_integration_action = QtWidgets.QAction("Start PlanarAlly integration")
+        self.start_pa_integration_action.triggered.connect(self.start_pa_integration)
+        self.advanced_menu.addAction(self.start_pa_integration_action)
+
+        self.stop_pa_integration_action = QtWidgets.QAction("Stop PlanarAlly integration")
+        self.stop_pa_integration_action.triggered.connect(self.stop_pa_integration)
+        self.advanced_menu.addAction(self.stop_pa_integration_action)
+        self.stop_pa_integration_action.setEnabled(False)
 
         self.ret_shortcut = QtWidgets.QShortcut(QtCore.Qt.Key_Return, self)
         self.ret_shortcut.activated.connect(self.edit_selected_creature)
@@ -1115,6 +1138,28 @@ class InitApp(flyingcarpet.App):
                 if not creature.max_hp_generator:
                     creature.max_hp_generator = "1"
                 self.add_creature(creature)
+
+    def start_pa_integration(self):
+        url, _ = QtWidgets.QInputDialog.getText(self, "PlanarAlly Integration", "URL")
+        if url:
+            url, username, room = re.match("(.*)/game/(\w+)/(.+)$", url).groups()
+            password, _ = QtWidgets.QInputDialog.getText(self, "PlanarAlly Integration", f"Password for {username}", QtWidgets.QLineEdit.Password)
+            self.pa_integration = PlanarAllyIntegration(url, username, password, room, [self.creature_model.index(i, 0).data(QtCore.Qt.UserRole) for i in range(self.creature_model.rowCount())])
+            self.creature_model.dataChanged.connect(self.pa_integration.on_creature_change)
+            self.start_pa_integration_action.setEnabled(False)
+            self.stop_pa_integration_action.setEnabled(True)
+
+    def stop_pa_integration(self):
+        self.pa_integration.close()
+        self.pa_integration = None
+        self.start_pa_integration_action.setEnabled(True)
+        self.stop_pa_integration_action.setEnabled(False)
+
+    def closeEvent(self, event):
+        if self.pa_integration:
+            self.stop_pa_integration()
+
+        super().closeEvent(event)
 
 
 if __name__ == "__main__":
