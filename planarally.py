@@ -34,6 +34,14 @@ class PlanarAllyIntegration:
         def message(data):
             self.tokens[data["uuid"]] = data
 
+        @self.sio.on("Shape.Options.ShowBadge.Set", namespace="/planarally")
+        def message(data):
+            self.tokens[data["shape"]]["show_badge"] = data["value"]
+
+        @self.sio.on("Shape.Options.Name.Set", namespace="/planarally")
+        def message(data):
+            self.tokens[data["shape"]]["name"] = data["value"]
+
         self.sio.connect(
             f"{url}/socket.io/?user={username}&room={room}",
             namespaces=["/planarally"],
@@ -75,7 +83,7 @@ class PlanarAllyIntegration:
                 return
 
     def set_defeated(self, token, creature):
-        creature_defeated = any(t in ("unconscious", "defeated") for t, _ in creature.tags)
+        creature_defeated = any(t in ("unconscious", "defeated", "dead") for t, _ in creature.tags)
         if creature_defeated != token["is_defeated"]:
             self.sio.emit(
                 "Shape.Options.Defeated.Set",

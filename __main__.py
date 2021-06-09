@@ -44,6 +44,7 @@ CONDITIONS = [
 
 OTHERS = [
     "dead",
+    "defeated",
     "readied-action",
     "used-reaction",
     "concentration"
@@ -895,6 +896,8 @@ class InitApp(flyingcarpet.App):
         item = QtGui.QStandardItem()
         item.setData(creature, QtCore.Qt.UserRole)
         self.creature_model.appendRow(item)
+        if self.pa_integration:
+            self.pa_integration.update_creature(creature)
 
     def clone_selected_creature(self):
         for creature in self.selected_creatures:
