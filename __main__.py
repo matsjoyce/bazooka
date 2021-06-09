@@ -42,6 +42,11 @@ CONDITIONS = [
     "unconscious"
 ]
 
+PA_INTEGRATION = [
+    "pa",
+    "acchp"
+]
+
 OTHERS = [
     "dead",
     "defeated",
@@ -57,9 +62,10 @@ DURATION_FOR_TAG = {
 
 COLOR_FOR_TAG = {}
 COLOR_FOR_TAG.update({c: QtCore.Qt.darkRed for c in CONDITIONS})
+COLOR_FOR_TAG.update({c: QtCore.Qt.darkBlue for c in PA_INTEGRATION})
 COLOR_FOR_TAG.update({o: QtCore.Qt.darkYellow for o in OTHERS})
 
-TAG_COMPLETIONS = sorted(CONDITIONS + OTHERS)
+TAG_COMPLETIONS = sorted(CONDITIONS + PA_INTEGRATION + OTHERS)
 
 LOADED_STAT_SHEETS = {}
 

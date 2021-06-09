@@ -56,18 +56,18 @@ class PlanarAllyIntegration:
         self.update_creature(index.data(QtCore.Qt.UserRole))
 
     def update_creature(self, creature):
-        creature_token_names = [m.groups() for t, _ in creature.tags if (m := re.match("pa:([^/:]+)(?:/(\d+))?(?::([\w,]+))?$", t))]
-        if not creature_token_names:
+        tags = {t for t, _ in creature.tags}
+        if "pa" not in tags:
             return
-        name, badge, options = creature_token_names[0]
-        has_badge = badge is not None
-        badge = int(badge) - 1 if badge else 0
-        options = options.split(",") if options else []
-        print("Searching for PA token", name, badge, has_badge, options)
+
+        print("Searching for PA token", creature.name, tags)
 
         for token in self.tokens.values():
-            print((token.get("name"), token.get("badge"), token.get("show_badge")), (name, badge, has_badge))
-            if (token.get("name"), token.get("badge"), token.get("show_badge")) == (name, badge, has_badge):
+            token_name = token.get("name")
+            if token.get("show_badge"):
+                token_name += str(token.get("badge") + 1)
+            print(" -> Found", token_name)
+            if token_name.lower() == creature.name.lower():
                 print("Found", token)
                 self.set_is_token(token)
                 self.set_defeated(token, creature)
@@ -77,7 +77,7 @@ class PlanarAllyIntegration:
                 for tracker in token["trackers"]:
                     if tracker["name"] == "HP":
                         print("Updating tracker")
-                        self.set_hp_on_token(tracker, token, creature, options)
+                        self.set_hp_on_token(tracker, token, creature, tags)
                         break
 
                 return
@@ -107,7 +107,7 @@ class PlanarAllyIntegration:
             )
             token["is_token"] = True
 
-    def set_hp_on_token(self, tracker, token, creature, options):
+    def set_hp_on_token(self, tracker, token, creature, tags):
         max_hp = creature.max_hp if creature.max_hp is not None else 1
         hp = creature.hp if creature.hp is not None else 1
         if creature.max_hp is None:
@@ -118,7 +118,7 @@ class PlanarAllyIntegration:
             color = "#00FF00"
         else:
             color = "#FFAA00"
-        if "acchp" not in options:
+        if "acchp" not in tags:
             if hp == 0:
                 hp = 0
             elif hp <= max_hp / 2:
