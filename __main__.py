@@ -44,8 +44,12 @@ CONDITIONS = [
 
 PA_INTEGRATION = [
     "pa",
-    "acchp"
-]
+    "acchp",
+    "darkvision-0",
+    "darkvision-60",
+    "darkvision-120",
+    "torch"
+] + [f"side-{i+1}" for i in range(10)]
 
 OTHERS = [
     "dead",
@@ -62,7 +66,7 @@ DURATION_FOR_TAG = {
 
 COLOR_FOR_TAG = {}
 COLOR_FOR_TAG.update({c: QtCore.Qt.darkRed for c in CONDITIONS})
-COLOR_FOR_TAG.update({c: QtCore.Qt.darkBlue for c in PA_INTEGRATION})
+COLOR_FOR_TAG.update({pa: QtCore.Qt.darkGreen for pa in PA_INTEGRATION})
 COLOR_FOR_TAG.update({o: QtCore.Qt.darkYellow for o in OTHERS})
 
 TAG_COMPLETIONS = sorted(CONDITIONS + PA_INTEGRATION + OTHERS)
@@ -1007,7 +1011,7 @@ class InitApp(flyingcarpet.App):
         if not scti:
             return
 
-        tags = set.intersection(*[set(c.tags) for c in scti])
+        tags = set.union(*[set(c.tags) for c in scti])
         if not tags:
             return
 
@@ -1016,8 +1020,7 @@ class InitApp(flyingcarpet.App):
             return
 
         for creature, idx in scti.items():
-            for tag in dia.tags:
-                creature.tags.remove(tag)
+            creature.tags = [t for t in creature.tags if t not in dia.tags]
             self.creature_model.itemFromIndex(self.creature_sort_model.mapToSource(idx)).emitDataChanged()
 
     def add_death_save_to_selected_creatures(self, success=True):

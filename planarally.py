@@ -71,14 +71,24 @@ class PlanarAllyIntegration:
                 print("Found", token)
                 self.set_is_token(token)
                 self.set_defeated(token, creature)
-                if not any(t["name"] == "HP" for t in token["trackers"]):
-                    print("Adding tracker")
-                    self.add_hp_to_token(token)
+                self.set_side_data(token, tags)
                 for tracker in token["trackers"]:
                     if tracker["name"] == "HP":
                         print("Updating tracker")
                         self.set_hp_on_token(tracker, token, creature, tags)
                         break
+                else:
+                    print("Adding tracker")
+                    self.add_hp_to_token(token, creature, tags)
+
+                for auras in token["auras"]:
+                    if auras["name"] == "Vision":
+                        print("Updating aura")
+                        self.set_vision_on_token(auras, token, creature, tags)
+                        break
+                else:
+                    print("Adding aura")
+                    self.add_vision_to_token(token, creature, tags)
 
                 return
 
@@ -107,6 +117,34 @@ class PlanarAllyIntegration:
             )
             token["is_token"] = True
 
+    def set_side_data(self, token, tags):
+        sides = [i for i in range(10) if f"side-{i+1}" in tags]
+        if not sides:
+            return
+        side = sides[0]
+        color = [
+            "rgb(12, 97, 20)", # dark green
+            "rgb(255, 215, 0)", # yellow
+            "rgb(32, 220, 219)", # cyan
+            "rgb(0, 2, 195)", # dark blue
+            "rgb(143, 0, 195)", # purple
+            "rgb(109, 59, 0)", # brown
+            "rgb(255, 147, 0)", # orange
+            "rgb(255, 255, 255)", # white
+            "rgb(0, 0, 0)", # black
+            "rgb(148, 148, 148)", # grey
+        ]
+        if token["fill_colour"] != color[side]:
+            self.sio.emit(
+                "Shape.Options.FillColour.Set",
+                {
+                    "shape": token["uuid"],
+                    "value": color[side]
+                },
+                namespace="/planarally"
+            )
+            token["fill_colour"] = color
+
     def set_hp_on_token(self, tracker, token, creature, tags):
         max_hp = creature.max_hp if creature.max_hp is not None else 1
         hp = creature.hp if creature.hp is not None else 1
@@ -122,9 +160,10 @@ class PlanarAllyIntegration:
             if hp == 0:
                 hp = 0
             elif hp <= max_hp / 2:
-                hp = max_hp // 2
+                hp = 1
             else:
-                hp = max_hp
+                hp = 2
+            max_hp = 2
         data = {
             "uuid": tracker["uuid"],
             "value": hp,
@@ -135,7 +174,7 @@ class PlanarAllyIntegration:
 
         self.sio.emit("Shape.Options.Tracker.Update", data, namespace="/planarally")
 
-    def add_hp_to_token(self, token):
+    def add_hp_to_token(self, token, creature, tags):
         tid = str(uuid.uuid4())
         data = {
             "uuid": tid,
@@ -150,3 +189,50 @@ class PlanarAllyIntegration:
         }
         self.sio.emit("Shape.Options.Tracker.Create", data, namespace="/planarally")
         token["trackers"].append(data)
+        self.set_hp_on_token(data, token, creature, tags)
+
+    def set_vision_on_token(self, aura, token, creature, tags):
+        range_ = None
+        color = "rgba(0,0,0,0)"
+        if "darkvision-0" in tags:
+            range_ = 0, 0
+        elif "darkvision-60" in tags:
+            range_ = 55, 5
+        elif "darkvision-120" in tags:
+            range_ = 115, 5
+        elif "torch" in tags:
+            range_ = 20, 20
+            color = "rgba(255, 186, 0, 0.5)" # orangey
+
+        data = {
+            "uuid": aura["uuid"],
+            "active": range_ is not None,
+            "value": 0 if range_ is None else range_[0],
+            "dim": 0 if range_ is None else range_[1],
+            "colour": color,
+            "shape": token["uuid"]
+        }
+
+        self.sio.emit("Shape.Options.Aura.Update", data, namespace="/planarally")
+        pass
+
+    def add_vision_to_token(self, token, creature, tags):
+        aid = str(uuid.uuid4())
+        data = {
+            "uuid": aid,
+            "active": True,
+            "vision_source": True,
+            "visible": False, # Private to that character
+            "name": "Vision",
+            "value": 0,
+            "dim": 0,
+            "colour": "rgba(0,0,0,0)",
+            "border_colour": "rgba(0,0,0,0)",
+            "angle": 360,
+            "direction": 0,
+            "shape": token["uuid"]
+        }
+        self.sio.emit("Shape.Options.Aura.Create", data, namespace="/planarally")
+        token["auras"].append(data)
+        self.set_vision_on_token(data, token, creature, tags)
+        pass
