@@ -194,6 +194,7 @@ class PlanarAllyIntegration:
     def set_vision_on_token(self, aura, token, creature, tags):
         range_ = None
         color = "rgba(0,0,0,0)"
+        public = False
         if "darkvision-0" in tags:
             range_ = 0, 0
         elif "darkvision-60" in tags:
@@ -203,6 +204,7 @@ class PlanarAllyIntegration:
         elif "torch" in tags:
             range_ = 20, 20
             color = "rgba(255, 186, 0, 0.5)" # orangey
+            public = True
 
         data = {
             "uuid": aura["uuid"],
@@ -210,6 +212,7 @@ class PlanarAllyIntegration:
             "value": 0 if range_ is None else range_[0],
             "dim": 0 if range_ is None else range_[1],
             "colour": color,
+            "visible": public,
             "shape": token["uuid"]
         }
 
