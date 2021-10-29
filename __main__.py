@@ -1079,8 +1079,8 @@ class InitApp(flyingcarpet.App):
 
         for creature in data["creatures"]:
             creature = Creature.from_json(creature)
-            creature.hp = creature.initiative = None
-            creature.death_saves_success = creature.death_saves_failure = 0
+            creature.evaluated_max_hp = creature.initiative = None
+            creature.damage_taken = creature.death_saves_success = creature.death_saves_failure = 0
             creature.completed_round = -1
             self.add_creature(creature)
 
@@ -1156,8 +1156,7 @@ class InitApp(flyingcarpet.App):
         if url:
             url, username, room = re.match("(.*)/game/(\w+)/(.+)$", url).groups()
             password, _ = QtWidgets.QInputDialog.getText(self, "PlanarAlly Integration", f"Password for {username}", QtWidgets.QLineEdit.Password)
-            self.pa_integration = PlanarAllyIntegration(url, username, password, room, [self.creature_model.index(i, 0).data(QtCore.Qt.UserRole) for i in range(self.creature_model.rowCount())])
-            self.creature_model.dataChanged.connect(self.pa_integration.on_creature_change)
+            self.pa_integration = PlanarAllyIntegration(url, username, password, room, self.creature_model)
             self.start_pa_integration_action.setEnabled(False)
             self.stop_pa_integration_action.setEnabled(True)
 

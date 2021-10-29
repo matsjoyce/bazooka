@@ -3,12 +3,19 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 
 class PlanarAllyIntegration:
-    def __init__(self, url, username, password, room, creatures):
+    def __init__(self, url, username, password, room, creature_model):
         r = requests.post(f"{url}/api/login", json={"username": username, "password": password})
         r.raise_for_status()
 
         self.sio = socketio.Client(logger=True, engineio_logger=True)
         self.tokens = {}
+
+        def update_all():
+            creatures = [creature_model.index(i, 0).data(QtCore.Qt.UserRole) for i in range(creature_model.rowCount())]
+            for creature in creatures:
+                self.update_creature(creature)
+
+        creature_model.dataChanged.connect(update_all)
 
         @self.sio.event(namespace="/planarally")
         def connect():
@@ -16,31 +23,39 @@ class PlanarAllyIntegration:
 
         @self.sio.on("Board.Floor.Set", namespace="/planarally")
         def message(data):
+            self.tokens.clear()
             for layer in data["layers"]:
                 if layer["name"] not in ("dm", "tokens"):
                     continue
                 for shape in layer["shapes"]:
                     self.tokens[shape["uuid"]] = shape
 
-            for creature in creatures:
-                self.update_creature(creature)
+            update_all()
 
         @self.sio.on("Shapes.Remove", namespace="/planarally")
         def message(data):
-            for uuid in data["uuids"]:
+            for uuid in data:
                 self.tokens.pop(uuid, None)
+
+            update_all()
 
         @self.sio.on("Shape.Add", namespace="/planarally")
         def message(data):
             self.tokens[data["uuid"]] = data
 
+            update_all()
+
         @self.sio.on("Shape.Options.ShowBadge.Set", namespace="/planarally")
         def message(data):
             self.tokens[data["shape"]]["show_badge"] = data["value"]
 
+            update_all()
+
         @self.sio.on("Shape.Options.Name.Set", namespace="/planarally")
         def message(data):
             self.tokens[data["shape"]]["name"] = data["value"]
+
+            update_all()
 
         self.sio.connect(
             f"{url}/socket.io/?user={username}&room={room}",
@@ -51,9 +66,6 @@ class PlanarAllyIntegration:
 
     def close(self):
         self.sio.disconnect()
-
-    def on_creature_change(self, index):
-        self.update_creature(index.data(QtCore.Qt.UserRole))
 
     def update_creature(self, creature):
         tags = {t for t, _ in creature.tags}
