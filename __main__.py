@@ -9,14 +9,13 @@ import flyingcarpet
 from PyQt5 import QtCore, QtGui, QtWidgets
 import pathlib
 import datetime
-import random
 import json
 import re
 import traceback
 import time
 
 from .planarally import PlanarAllyIntegration
-from .common import Creature, DEvalMode, d_eval
+from .common import Creature, DEvalMode, DLexer, DParser, d_eval
 
 
 BASE_DIR = pathlib.Path("/home/matthew/D&D/Bazooka")
@@ -99,10 +98,16 @@ class DValidator(QtGui.QValidator):
 
 
 class CreatureDialog(QtWidgets.QDialog):
-    def __init__(self, *args, title="Edit Creature", creature=None):
+    def __init__(self, *args, title="Edit Creature", creatures):
         super().__init__(*args)
 
-        self.creature = creature or Creature()
+        def first_or_empty(xs):
+            xs = set(xs)
+            if len(xs) == 1:
+                return xs.pop()
+            return ""
+
+        self.creatures = list(creatures)
         self.setWindowTitle(title)
 
         self.setLayout(QtWidgets.QGridLayout())
@@ -110,14 +115,19 @@ class CreatureDialog(QtWidgets.QDialog):
         self.name_label = QtWidgets.QLabel("Name:", self)
         self.layout().addWidget(self.name_label, 0, 0)
 
-        self.name_edit = QtWidgets.QLineEdit(self.creature.name, self)
+        self.name_edit = QtWidgets.QLineEdit(first_or_empty(c.name for c in self.creatures), self)
         self.layout().addWidget(self.name_edit, 0, 1)
+
+        if len(self.creatures) > 1:
+            self.name_edit.setEnabled(False)
+            self.name_edit.setText("Multiple selected")
+
         self.name_edit.textChanged.connect(self.set_ok_enabled)
 
         self.max_hp_label = QtWidgets.QLabel("Max HP:", self)
         self.layout().addWidget(self.max_hp_label, 1, 0)
 
-        self.max_hp_edit = QtWidgets.QLineEdit(self.creature.max_hp_generator, self)
+        self.max_hp_edit = QtWidgets.QLineEdit(first_or_empty(c.max_hp_generator for c in self.creatures), self)
         self.max_hp_edit.setValidator(DValidator(self, allow_empty=True))
         self.layout().addWidget(self.max_hp_edit, 1, 1)
         self.max_hp_edit.textChanged.connect(self.set_ok_enabled)
@@ -125,7 +135,7 @@ class CreatureDialog(QtWidgets.QDialog):
         self.xp_label = QtWidgets.QLabel("XP:", self)
         self.layout().addWidget(self.xp_label, 2, 0)
 
-        self.xp_edit = QtWidgets.QLineEdit(str(self.creature.xp) if self.creature.xp is not None else "", self)
+        self.xp_edit = QtWidgets.QLineEdit(first_or_empty(str(c.xp) if c.xp is not None else "" for c in self.creatures), self)
         self.xp_edit.setValidator(QtGui.QIntValidator(0, 1000000, self))
         self.layout().addWidget(self.xp_edit, 2, 1)
 
@@ -143,11 +153,14 @@ class CreatureDialog(QtWidgets.QDialog):
             self.buttonbox.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(True)
 
     def accept(self):
-        self.creature.name = self.name_edit.text()
-        self.creature.xp = int(self.xp_edit.text()) if self.xp_edit.text() else None
-        if self.creature.max_hp_generator != self.max_hp_edit.text():
-            self.creature.max_hp_generator = self.max_hp_edit.text()
-            self.creature.evaluated_max_hp = None
+        for creature in self.creatures:
+            if self.name_edit.isEnabled():
+                creature.name = self.name_edit.text()
+            if len(self.creatures) == 1 or self.xp_edit.text():
+                creature.xp = int(self.xp_edit.text()) if self.xp_edit.text() else None
+            if (len(self.creatures) == 1 or self.max_hp_edit.text()) and creature.max_hp_generator != self.max_hp_edit.text():
+                creature.max_hp_generator = self.max_hp_edit.text()
+                creature.evaluated_max_hp = None
         super().accept()
 
 
@@ -546,7 +559,7 @@ class InitApp(flyingcarpet.App):
         self.creature_list.setUniformItemSizes(True)
         self.creature_list.setAlternatingRowColors(True)
         self.creature_list.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.creature_list.doubleClicked.connect(self.edit_creature)
+        self.creature_list.doubleClicked.connect(self.edit_selected_creatures)
         self.centralWidget().layout().addWidget(self.creature_list)
 
         self.add_creature_action = QtWidgets.QAction(QtGui.QIcon.fromTheme("list-add"), "Add Creature")
@@ -685,7 +698,7 @@ class InitApp(flyingcarpet.App):
         self.auto_pa_tokens_action.setCheckable(True)
 
         self.ret_shortcut = QtWidgets.QShortcut(QtCore.Qt.Key_Return, self)
-        self.ret_shortcut.activated.connect(self.edit_selected_creature)
+        self.ret_shortcut.activated.connect(self.edit_selected_creatures)
 
         for creature in creatures:
             self.add_creature(creature)
@@ -759,9 +772,10 @@ class InitApp(flyingcarpet.App):
         }
 
     def add_creature_dialog(self):
-        dia = CreatureDialog()
+        creature = Creature()
+        dia = CreatureDialog([creature])
         if dia.exec_():
-            self.add_creature(dia.creature)
+            self.add_creature(creature)
 
     def add_creature(self, creature):
         item = QtGui.QStandardItem()
@@ -803,15 +817,13 @@ class InitApp(flyingcarpet.App):
                 creature.initiative = dia.initiative
                 idx.emitDataChanged()
 
-    def edit_selected_creature(self):
-        selected_idxs = self.creature_list.selectedIndexes()
-        if selected_idxs:
-            self.edit_creature(selected_idxs[0])
-
-    def edit_creature(self, idx):
-        dia = CreatureDialog(self, creature=idx.data(QtCore.Qt.UserRole))
-        if dia.exec_():
-            self.creature_model.itemFromIndex(self.creature_sort_model.mapToSource(idx)).emitDataChanged()
+    def edit_selected_creatures(self):
+        idxs = self.creature_list.selectedIndexes()
+        if idxs:
+            dia = CreatureDialog(self, creatures=[idx.data(QtCore.Qt.UserRole) for idx in idxs])
+            if dia.exec_():
+                for idx in idxs:
+                    self.creature_model.itemFromIndex(self.creature_sort_model.mapToSource(idx)).emitDataChanged()
 
     def current_creature(self, creatures=None):
         if self.current_round < 1:
