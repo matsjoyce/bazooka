@@ -1,6 +1,8 @@
 import socketio, requests, re, uuid
 from PyQt5 import QtCore, QtGui, QtWidgets
 
+from .common import Creature
+
 
 class PlanarAllyIntegration:
     def __init__(self, url, username, password, room, creature_model):
@@ -9,53 +11,58 @@ class PlanarAllyIntegration:
 
         self.sio = socketio.Client(logger=True, engineio_logger=True)
         self.tokens = {}
+        self.auto_add = False
+        self.updating = False
+        self.creature_model = creature_model
 
-        def update_all():
-            creatures = [creature_model.index(i, 0).data(QtCore.Qt.UserRole) for i in range(creature_model.rowCount())]
-            for creature in creatures:
-                self.update_creature(creature)
-
-        creature_model.dataChanged.connect(update_all)
+        self.creature_model.dataChanged.connect(self.update_all)
+        self.creature_model.rowsInserted.connect(self.update_all)
+        self.creature_model.rowsRemoved.connect(self.update_all)
 
         @self.sio.event(namespace="/planarally")
         def connect():
             self.sio.emit("Location.Load", namespace="/planarally")
 
-        @self.sio.on("Board.Floor.Set", namespace="/planarally")
+        @self.sio.on("Location.Set", namespace="/planarally")
         def message(data):
             self.tokens.clear()
+            self.update_all()
+
+        @self.sio.on("Board.Floor.Set", namespace="/planarally")
+        def message(data):
             for layer in data["layers"]:
                 if layer["name"] not in ("dm", "tokens"):
                     continue
                 for shape in layer["shapes"]:
                     self.tokens[shape["uuid"]] = shape
 
-            update_all()
+            self.update_all()
 
         @self.sio.on("Shapes.Remove", namespace="/planarally")
         def message(data):
             for uuid in data:
                 self.tokens.pop(uuid, None)
 
-            update_all()
+            self.update_all()
 
         @self.sio.on("Shape.Add", namespace="/planarally")
         def message(data):
             self.tokens[data["uuid"]] = data
 
-            update_all()
+            self.update_all()
 
         @self.sio.on("Shape.Options.ShowBadge.Set", namespace="/planarally")
         def message(data):
             self.tokens[data["shape"]]["show_badge"] = data["value"]
 
-            update_all()
+            self.update_all()
 
         @self.sio.on("Shape.Options.Name.Set", namespace="/planarally")
         def message(data):
+            print(self.tokens.keys())
             self.tokens[data["shape"]]["name"] = data["value"]
 
-            update_all()
+            self.update_all()
 
         self.sio.connect(
             f"{url}/socket.io/?user={username}&room={room}",
@@ -64,45 +71,88 @@ class PlanarAllyIntegration:
             transports=["websocket"]
         )
 
-    def close(self):
-        self.sio.disconnect()
 
-    def update_creature(self, creature):
-        tags = {t for t, _ in creature.tags}
-        if "pa" not in tags:
+    def update_all(self):
+        if self.updating:
             return
 
-        print("Searching for PA token", creature.name, tags)
+        self.updating = True
+        creatures_by_name = {}
+
+        for i in range(self.creature_model.rowCount()):
+            idx = self.creature_model.index(i, 0)
+            creature = idx.data(QtCore.Qt.UserRole)
+            if not any(t == "pa" for t, _ in creature.tags):
+                continue
+            if creature.name.lower() not in creatures_by_name:
+                creatures_by_name[creature.name.lower()] = (creature, idx)
+            else:
+                self.set_creature_tags(creature, idx, duplicate=True)
+
+        tokens_by_name = {}
+        duplicate_token_names = set()
 
         for token in self.tokens.values():
+            if token.get("src") == "/static/img/spawn.png":
+                continue
             token_name = token.get("name")
             if token.get("show_badge"):
                 token_name += str(token.get("badge") + 1)
-            print(" -> Found", token_name)
-            if token_name.lower() == creature.name.lower():
-                print("Found", token)
-                self.set_is_token(token)
-                self.set_defeated(token, creature)
-                self.set_side_data(token, tags)
-                for tracker in token["trackers"]:
-                    if tracker["name"] == "HP":
-                        print("Updating tracker")
-                        self.set_hp_on_token(tracker, token, creature, tags)
-                        break
-                else:
-                    print("Adding tracker")
-                    self.add_hp_to_token(token, creature, tags)
+            if token_name not in tokens_by_name:
+                tokens_by_name[token_name] = token
+            else:
+                duplicate_token_names.add(token_name)
 
-                for auras in token["auras"]:
-                    if auras["name"] == "Vision":
-                        print("Updating aura")
-                        self.set_vision_on_token(auras, token, creature, tags)
-                        break
-                else:
-                    print("Adding aura")
-                    self.add_vision_to_token(token, creature, tags)
+        for token_name, token in sorted(tokens_by_name.items()):
+            print(" -> Found", token_name, creatures_by_name.keys())
+            if token_name.lower() in creatures_by_name:
+                creature, idx = creatures_by_name.pop(token_name.lower())
+            elif self.auto_add:
+                creature = Creature(name=token_name, tags=[("pa", None)])
 
-                return
+                item = QtGui.QStandardItem()
+                item.setData(creature, QtCore.Qt.UserRole)
+                self.creature_model.appendRow(item)
+                idx = self.creature_model.index(self.creature_model.rowCount() - 1, 0)
+            else:
+                continue
+
+            self.update_creature(token, creature, idx, duplicate_token=token_name in duplicate_token_names)
+
+        for creature, idx in creatures_by_name.values():
+            self.set_creature_tags(creature, idx, not_found=True)
+        self.updating = False
+
+    def close(self):
+        self.sio.disconnect()
+
+    def set_auto_add(self, value):
+        self.auto_add = value
+        self.update_all()
+
+    def update_creature(self, token, creature, creature_idx, duplicate_token):
+        self.set_creature_tags(creature, creature_idx, duplicate_token=duplicate_token)
+        tags = {t for t, _ in creature.tags}
+        self.set_is_token(token)
+        self.set_defeated(token, creature)
+        self.set_side_data(token, tags)
+        for tracker in token["trackers"]:
+            if tracker["name"] == "HP":
+                print("Updating tracker")
+                self.set_hp_on_token(tracker, token, creature, tags)
+                break
+        else:
+            print("Adding tracker")
+            self.add_hp_to_token(token, creature, tags)
+
+        for auras in token["auras"]:
+            if auras["name"] == "Vision":
+                print("Updating aura")
+                self.set_vision_on_token(auras, token, creature, tags)
+                break
+        else:
+            print("Adding aura")
+            self.add_vision_to_token(token, creature, tags)
 
     def set_defeated(self, token, creature):
         creature_defeated = any(t in ("unconscious", "defeated", "dead") for t, _ in creature.tags)
@@ -229,7 +279,6 @@ class PlanarAllyIntegration:
         }
 
         self.sio.emit("Shape.Options.Aura.Update", data, namespace="/planarally")
-        pass
 
     def add_vision_to_token(self, token, creature, tags):
         aid = str(uuid.uuid4())
@@ -250,4 +299,14 @@ class PlanarAllyIntegration:
         self.sio.emit("Shape.Options.Aura.Create", data, namespace="/planarally")
         token["auras"].append(data)
         self.set_vision_on_token(data, token, creature, tags)
-        pass
+
+    def set_creature_tags(self, creature, idx, not_found=False, duplicate=False, duplicate_token=False):
+        tags = [(t, d) for t, d in creature.tags if not t.startswith("pa-")]
+        if not_found:
+            tags.append(("pa-not-found", None))
+        if duplicate:
+            tags.append(("pa-duplicate", None))
+        if duplicate_token:
+            tags.append(("pa-duplicate-token", None))
+        creature.tags = tags
+        self.creature_model.itemFromIndex(idx).emitDataChanged()

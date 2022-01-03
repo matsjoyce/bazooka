@@ -2,23 +2,21 @@
 
 """
 Usage:
-    init.py [<file>]
+    init.py [<file>] [--pa=<pa-url>]
 """
 
 import flyingcarpet
 from PyQt5 import QtCore, QtGui, QtWidgets
-import dataclasses
 import pathlib
 import datetime
-import sly
 import random
 import json
 import re
 import traceback
-import enum
 import time
 
 from .planarally import PlanarAllyIntegration
+from .common import Creature, DEvalMode, d_eval
 
 
 BASE_DIR = pathlib.Path("/home/matthew/D&D/Bazooka")
@@ -79,148 +77,6 @@ def load_stat_from_sheet(sheet, name):
         with open(SHEETS_DIR / (sheet + ".json")) as f:
             LOADED_STAT_SHEETS[sheet] = json.load(f)
     return LOADED_STAT_SHEETS[sheet][name]
-
-
-class DEvalMode(enum.Enum):
-    normal, average = range(2)
-
-
-class DLexer(sly.Lexer):
-    tokens = {NUMBER, D, PLUS, MINUS, LPAREN, RPAREN}
-
-    NUMBER = r"\d+"
-    D = "d"
-    PLUS = r"\+"
-    MINUS = "-"
-    LPAREN = r"\("
-    RPAREN = r"\)"
-
-    ignore = r" \t"
-
-    class LexerError(RuntimeError):
-        pass
-
-    def error(self, t):
-        raise self.LexerError()
-
-
-class DParser(sly.Parser):
-    tokens = DLexer.tokens
-
-    def __init__(self, mode):
-        super().__init__()
-        self.mode = mode
-
-    @_("factor")
-    def expr(self, p):
-        return p.factor
-
-    @_("expr PLUS factor")
-    def expr(self, p):
-        return p.expr + p.factor
-
-    @_("expr MINUS factor")
-    def expr(self, p):
-        return p.expr - p.factor
-
-    @_("atom")
-    def factor(self, p):
-        return p.atom
-
-    @_("MINUS atom")
-    def factor(self, p):
-        return -p.atom
-
-    @_("atom D atom")
-    def factor(self, p):
-        if not p.atom1:
-            return 0
-        if self.mode is DEvalMode.normal:
-            return sum(random.randrange(1, p.atom1 + 1) for i in range(p.atom0))
-        else:
-            return p.atom0 * (p.atom1 + 1) / 2
-
-    @_("NUMBER")
-    def atom(self, p):
-        return int(p.NUMBER)
-
-    @_("LPAREN expr RPAREN")
-    def atom(self, p):
-        return p.expr
-
-    class ParserError(RuntimeError):
-        pass
-
-    class EOFError(ParserError):
-        pass
-
-    def error(self, p):
-        if not p:
-            raise self.EOFError()
-        raise self.ParserError()
-
-
-def d_eval(str, mode=DEvalMode.normal):
-    if not str:
-        return None
-    return int(DParser(mode).parse(DLexer().tokenize(str)))
-
-
-@dataclasses.dataclass
-class Creature:
-    name: str = ""
-    initiative: int = None
-    evaluated_max_hp: int = None
-    max_hp_generator: str = ""
-    damage_taken: int = 0
-    death_saves_success: int = 0
-    death_saves_failure: int = 0
-    tags: list = dataclasses.field(default_factory=list)
-    completed_round: int = -1
-    xp: int = None
-
-    @property
-    def max_hp(self):
-        if self.evaluated_max_hp is None:
-            self.evaluated_max_hp = d_eval(self.max_hp_generator)
-            if self.evaluated_max_hp is not None:
-                self.damage_taken = min(self.evaluated_max_hp, self.damage_taken)
-        return self.evaluated_max_hp
-
-    @property
-    def hp(self):
-        if self.max_hp is not None:
-            return max(0, min(self.max_hp, self.max_hp - self.damage_taken))
-
-    def apply_damage(self, damage):
-        if self.max_hp is not None:
-            self.damage_taken = min(self.max_hp, max(0, self.damage_taken + damage))
-        else:
-            self.damage_taken = max(0, self.damage_taken + damage)
-
-    def start_turn(self):
-        self.tags = [(n, None if t is None else (t - 1)) for n, t in self.tags if t is None or t > 1]
-
-    def end_turn(self):
-        pass
-
-    def to_json(self):
-        return self.__dict__
-
-    @classmethod
-    def from_json(cls, data):
-        data.pop("hp", None)
-        obj = cls(**data)
-        obj.tags = [tuple(t) for t in obj.tags]
-        return obj
-
-    def clone(self):
-        creature = self.from_json(self.to_json())
-        creature.evaluated_max_hp = None
-        return creature
-
-    def __hash__(self):
-        return id(self)
 
 
 class DValidator(QtGui.QValidator):
@@ -823,6 +679,11 @@ class InitApp(flyingcarpet.App):
         self.advanced_menu.addAction(self.stop_pa_integration_action)
         self.stop_pa_integration_action.setEnabled(False)
 
+        self.auto_pa_tokens_action = QtWidgets.QAction("Auto-add tokens from PlanarAlly")
+        self.auto_pa_tokens_action.toggled.connect(self.set_pa_integration_auto_add)
+        self.advanced_menu.addAction(self.auto_pa_tokens_action)
+        self.auto_pa_tokens_action.setCheckable(True)
+
         self.ret_shortcut = QtWidgets.QShortcut(QtCore.Qt.Key_Return, self)
         self.ret_shortcut.activated.connect(self.edit_selected_creature)
 
@@ -906,8 +767,6 @@ class InitApp(flyingcarpet.App):
         item = QtGui.QStandardItem()
         item.setData(creature, QtCore.Qt.UserRole)
         self.creature_model.appendRow(item)
-        if self.pa_integration:
-            self.pa_integration.update_creature(creature)
 
     def clone_selected_creature(self):
         for creature in self.selected_creatures:
@@ -1154,17 +1013,25 @@ class InitApp(flyingcarpet.App):
     def start_pa_integration(self):
         url, _ = QtWidgets.QInputDialog.getText(self, "PlanarAlly Integration", "URL")
         if url:
-            url, username, room = re.match("(.*)/game/(\w+)/(.+)$", url).groups()
-            password, _ = QtWidgets.QInputDialog.getText(self, "PlanarAlly Integration", f"Password for {username}", QtWidgets.QLineEdit.Password)
-            self.pa_integration = PlanarAllyIntegration(url, username, password, room, self.creature_model)
-            self.start_pa_integration_action.setEnabled(False)
-            self.stop_pa_integration_action.setEnabled(True)
+            password, _ = QtWidgets.QInputDialog.getText(self, "PlanarAlly Integration", "Password for {username}", QtWidgets.QLineEdit.Password)
+            if password:
+                self.start_pa_integration_with_values(url, password)
+
+    def start_pa_integration_with_values(self, url, password):
+        url, username, room = re.match("(.*)/game/(\w+)/(.+)$", url).groups()
+        self.pa_integration = PlanarAllyIntegration(url, username, password, room, self.creature_model)
+        self.start_pa_integration_action.setEnabled(False)
+        self.stop_pa_integration_action.setEnabled(True)
+        self.pa_integration.set_auto_add(self.auto_pa_tokens_action.isChecked())
 
     def stop_pa_integration(self):
         self.pa_integration.close()
         self.pa_integration = None
         self.start_pa_integration_action.setEnabled(True)
         self.stop_pa_integration_action.setEnabled(False)
+
+    def set_pa_integration_auto_add(self, value):
+        self.pa_integration.set_auto_add(bool(value))
 
     def closeEvent(self, event):
         if self.pa_integration:
@@ -1179,4 +1046,9 @@ if __name__ == "__main__":
 
     args = docopt.docopt(__doc__)
 
-    InitApp(fname=args["<file>"]).run()
+    app = InitApp(fname=args["<file>"])
+
+    if args["--pa"]:
+        app.start_pa_integration_with_values(*args["--pa"].rsplit(":", 1))
+
+    app.run()
