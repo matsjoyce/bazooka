@@ -14,6 +14,8 @@ class PlanarAllyIntegration:
         self.auto_add = False
         self.updating = False
         self.creature_model = creature_model
+        self.location_id = 1
+        self.remote_initiative = None
 
         self.creature_model.dataChanged.connect(self.update_all)
         self.creature_model.rowsInserted.connect(self.update_all)
@@ -25,6 +27,7 @@ class PlanarAllyIntegration:
 
         @self.sio.on("Location.Set", namespace="/planarally")
         def message(data):
+            self.location_id = data["id"]
             self.tokens.clear()
             self.update_all()
 
@@ -37,6 +40,11 @@ class PlanarAllyIntegration:
                     self.tokens[shape["uuid"]] = shape
 
             self.update_all()
+
+        @self.sio.on("Initiative.Set", namespace="/planarally")
+        def message(data):
+            if data["location"] == self.location_id:
+                self.remote_initiative = data
 
         @self.sio.on("Shapes.Remove", namespace="/planarally")
         def message(data):
@@ -64,13 +72,22 @@ class PlanarAllyIntegration:
 
             self.update_all()
 
+        @self.sio.on("Shapes.Layer.Change", namespace="/planarally")
+        def message(data):
+            for uuid in data["uuids"]:
+                self.tokens[uuid].update({
+                    "layer": data["layer"],
+                    "floor": data["floor"]
+                })
+
+            self.update_all()
+
         self.sio.connect(
             f"{url}/socket.io/?user={username}&room={room}",
             namespaces=["/planarally"],
             headers={"Cookie": f"AIOHTTP_SESSION={r.cookies['AIOHTTP_SESSION']}"},
             transports=["websocket"]
         )
-
 
     def update_all(self):
         if self.updating:
@@ -91,6 +108,7 @@ class PlanarAllyIntegration:
 
         tokens_by_name = {}
         duplicate_token_names = set()
+        initiative = []
 
         for token in self.tokens.values():
             if token.get("src") == "/static/img/spawn.png":
@@ -118,9 +136,11 @@ class PlanarAllyIntegration:
                 continue
 
             self.update_creature(token, creature, idx, duplicate_token=token_name in duplicate_token_names)
+            initiative.append((token, creature, idx))
 
         for creature, idx in creatures_by_name.values():
             self.set_creature_tags(creature, idx, not_found=True)
+        self.update_initiative(initiative)
         self.updating = False
 
     def close(self):
@@ -310,3 +330,25 @@ class PlanarAllyIntegration:
             tags.append(("pa-duplicate-token", None))
         creature.tags = tags
         self.creature_model.itemFromIndex(idx).emitDataChanged()
+
+    def update_initiative(self, initiative):
+        if self.remote_initiative is None:
+            return
+
+        initiative_data = []
+        remote_initiative_by_uuid = {d["shape"]: d for d in self.remote_initiative["data"]}
+        for token, creature, idx in initiative:
+            should_show = token["layer"] == "tokens"
+            if token["uuid"] not in remote_initiative_by_uuid:
+                self.sio.emit("Initiative.Add", {"effects": [], "isGroup": False, "isVisible": should_show, "shape": token["uuid"], "initiative": creature.initiative}, namespace="/planarally")
+            else:
+                remote_initiative = remote_initiative_by_uuid.pop(token["uuid"])
+
+                if creature.initiative != remote_initiative.get("initiative"):
+                    self.sio.emit("Initiative.Value.Set", {"shape": token["uuid"], "value": creature.initiative}, namespace="/planarally")
+
+                if should_show != remote_initiative.get("isVisible", False):
+                    self.sio.emit("Initiative.Option.Update", {"shape": token["uuid"], "option": "isVisible", "value": should_show}, namespace="/planarally")
+
+        for token_id in remote_initiative_by_uuid.keys():
+            self.sio.emit("Initiative.Remove", token_id, namespace="/planarally")
